@@ -308,7 +308,10 @@ _ERROR_CATEGORIES = [
     'readability/casting',
     'readability/check',
     'readability/constructors',
+    'readability/cyclomatic_complexity',
+    'readability/file_name',
     'readability/fn_size',
+    'readability/fn_name',
     'readability/inheritance',
     'readability/multiline_comment',
     'readability/multiline_string',
@@ -1492,7 +1495,12 @@ class _FunctionState(object):
   def __init__(self):
     self.in_a_function = False
     self.lines_in_function = 0
+    self.stat_line_num = 0
+    self.cyclomatic_complexity_in_function = 1
     self.current_function = ''
+  
+  def SetStartLineNum(self, line_num):
+    self.stat_line_num = line_num
 
   def Begin(self, function_name):
     """Start analyzing function body.
@@ -1502,12 +1510,47 @@ class _FunctionState(object):
     """
     self.in_a_function = True
     self.lines_in_function = 0
+    self.cyclomatic_complexity_in_function = 1
     self.current_function = function_name
+
+  def CountCyclomaticComplexity(self, line):
+    if self.in_a_function:
+      cc = re.findall('((?<=\W)(while)\W)|((?<=\W)if\W)|((?<=\W)for\W)|'
+                      '((?<=\W)and\W)|((?<=\W)or\W)|'
+                      '((?<!&)&&(?!&))|((?<!\|)\|\|(?!\|))|'
+                      '((?<=\W)case\W)|((?<=\W)catch\W)|(\?\S+\:\S+)', line)
+      # if len(cc) > 0:
+      #   print(cc, line, len(cc))
+      self.cyclomatic_complexity_in_function += len(cc)
+
+  def CheckCyclomaticComplexity(self, error, filename, linenum):
+    """Report if too large cyclomatic complexity in function body.
+
+    Args:
+      error: The function to call with any errors found.
+      filename: The name of the current file.
+      linenum: The number of the line to check.
+    """
+    if not self.in_a_function:
+      return
+    max_cyclomatic_complexity = 10
+    if self.cyclomatic_complexity_in_function > max_cyclomatic_complexity:
+      error(filename, self.stat_line_num, 'readability/cyclomatic_complexity', 5,
+            'Small cyclomatic complexity functions are preferred:'
+            ' %s has %d cyclomatic complexity(<= %d)' % (
+                self.current_function, self.cyclomatic_complexity_in_function, max_cyclomatic_complexity))
 
   def Count(self):
     """Count line in current function body."""
     if self.in_a_function:
       self.lines_in_function += 1
+
+  def CheckName(self, error, filename, linenum):
+    function_name_strip = self.current_function.split("::")[-1]
+    # function name rules
+    if not re.match('^([A-Z]+(?:\w+)*)$|(main)', function_name_strip):
+      error(filename, linenum, 'readability/fn_name', 5,
+          'Funcitons\' name must match the PascalCase rule.')
 
   def Check(self, error, filename, linenum):
     """Report if too many lines in function body.
@@ -3576,6 +3619,9 @@ def CheckForFunctionLengths(filename, clean_lines, linenum,
     if function_name == 'TEST' or function_name == 'TEST_F' or (
         not Match(r'[A-Z_]+$', function_name)):
       starting_func = True
+      function_state.SetStartLineNum(linenum)
+      if function_name != 'TEST' and function_name != 'TEST_F':
+        function_state.CheckName(error, filename, linenum)
 
   if starting_func:
     body_found = False
@@ -3602,8 +3648,10 @@ def CheckForFunctionLengths(filename, clean_lines, linenum,
             'Lint failed to find start of function body.')
   elif Match(r'^\}\s*$', line):  # function end
     function_state.Check(error, filename, linenum)
+    function_state.CheckCyclomaticComplexity(error, filename, linenum)
     function_state.End()
   elif not Match(r'^\s*$', line):
+    function_state.CountCyclomaticComplexity(line)
     function_state.Count()  # Count non-blank/non-comment lines.
 
 
@@ -6587,6 +6635,10 @@ def ProcessConfigOverrides(filename):
 
   return True
 
+def CheckFileName(filename):
+  if not re.match('^[a-z]+[a-z0-9_]*$', filename):
+    Error(filename, 0, 'readability/file_name', 5,
+        'Files\' name must match the snake_case rule.')
 
 def ProcessFile(filename, vlevel, extra_check_functions=None):
   """Does google-lint on a single file.
@@ -6653,6 +6705,8 @@ def ProcessFile(filename, vlevel, extra_check_functions=None):
     _cpplint_state.PrintError('Ignoring %s; not a valid file name '
                      '(%s)\n' % (filename, ', '.join(GetAllExtensions())))
   else:
+    stripped_filename = filename.split('/')[-1].split('.')[0]
+    CheckFileName(stripped_filename)
     ProcessFileData(filename, file_extension, lines, Error,
                     extra_check_functions)
 
