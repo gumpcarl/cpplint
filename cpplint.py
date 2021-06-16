@@ -311,6 +311,7 @@ _ERROR_CATEGORIES = [
     'readability/cyclomatic_complexity',
     'readability/file_name',
     'readability/fn_size',
+    'readability/fn_max_depth',
     'readability/fn_name',
     'readability/inheritance',
     'readability/multiline_comment',
@@ -869,7 +870,7 @@ _quiet = False
 
 # The allowed line length of files.
 # This is set by --linelength flag.
-_line_length = 80
+_line_length = 120
 
 # This allows to use different include order rule than default
 _include_order = "default"
@@ -1489,14 +1490,16 @@ def _RestoreFilters():
 class _FunctionState(object):
   """Tracks current function name and the number of lines in its body."""
 
-  _NORMAL_TRIGGER = 250  # for --v=0, 500 for --v=1, etc.
-  _TEST_TRIGGER = 400    # about 50% more than _NORMAL_TRIGGER.
+  _NORMAL_TRIGGER = 50  # for --v=0, 500 for --v=1, etc.
+  _TEST_TRIGGER = 100    # about 50% more than _NORMAL_TRIGGER.
 
   def __init__(self):
     self.in_a_function = False
     self.lines_in_function = 0
     self.stat_line_num = 0
     self.cyclomatic_complexity_in_function = 1
+    self.nested_max_depth = 1
+    self.depth = 1
     self.current_function = ''
   
   def SetStartLineNum(self, line_num):
@@ -1511,6 +1514,8 @@ class _FunctionState(object):
     self.in_a_function = True
     self.lines_in_function = 0
     self.cyclomatic_complexity_in_function = 1
+    self.nested_max_depth = 1
+    self.depth = 1
     self.current_function = function_name
 
   def CountCyclomaticComplexity(self, line):
@@ -1522,6 +1527,16 @@ class _FunctionState(object):
       # if len(cc) > 0:
       #   print(cc, line, len(cc))
       self.cyclomatic_complexity_in_function += len(cc)
+
+  def CountNestedMaxDepth(self, line):
+    if self.in_a_function:
+      left = re.findall('(?<!\"|\').*\{.*?(?!\"|\')', line)
+      right = re.findall('(?<!\"|\').*\}.*?(?!\"|\')', line)
+      # if len(cc) > 0:
+      #   print(cc, line, len(cc))
+      # print(left, line, len(left), len(right))
+      self.depth += (len(left) - len(right))
+      self.nested_max_depth = max([self.depth, self.nested_max_depth])
 
   def CheckCyclomaticComplexity(self, error, filename, linenum):
     """Report if too large cyclomatic complexity in function body.
@@ -1545,12 +1560,22 @@ class _FunctionState(object):
     if self.in_a_function:
       self.lines_in_function += 1
 
+  def CheckNestedMaxDepth(self, error, filename, linenum):
+    if not self.in_a_function:
+      return
+    max_depth = 5
+    if self.nested_max_depth > max_depth:
+      error(filename, self.stat_line_num, 'readability/fn_max_depth', 5,
+            'Small depth functions are preferred:'
+            ' %s has %d depth(<= %d)' % (
+                self.current_function, self.nested_max_depth, max_depth))
+
   def CheckName(self, error, filename, linenum):
-    function_name_strip = self.current_function.split("::")[-1]
+    function_name_strip = self.current_function.split("::")[-1].split("()")[0]
     # function name rules
-    if not re.match('^([A-Z]+(?:\w+)*)$|(main)', function_name_strip):
-      error(filename, linenum, 'readability/fn_name', 5,
-          'Funcitons\' name must match the PascalCase rule.')
+    if not re.match('^([A-Z]+\w+)$|(main)', function_name_strip):
+      reason = 'Funcitons\' name ({}) must match the PascalCase rule.'.format(function_name_strip)
+      error(filename, linenum, 'readability/fn_name', 5, reason)
 
   def Check(self, error, filename, linenum):
     """Report if too many lines in function body.
@@ -1562,23 +1587,21 @@ class _FunctionState(object):
     """
     if not self.in_a_function:
       return
-
     if Match(r'T(EST|est)', self.current_function):
       base_trigger = self._TEST_TRIGGER
     else:
       base_trigger = self._NORMAL_TRIGGER
     trigger = base_trigger * 2**_VerboseLevel()
-
     if self.lines_in_function > trigger:
       error_level = int(math.log(self.lines_in_function / base_trigger, 2))
       # 50 => 0, 100 => 1, 200 => 2, 400 => 3, 800 => 4, 1600 => 5, ...
       if error_level > 5:
         error_level = 5
-      error(filename, linenum, 'readability/fn_size', error_level,
+      error(filename, self.stat_line_num, 'readability/fn_size', error_level,
             'Small and focused functions are preferred:'
             ' %s has %d non-comment lines'
             ' (error triggered by exceeding %d lines).'  % (
-                self.current_function, self.lines_in_function, trigger))
+                self.current_function, self.lines_in_function, trigger))    
 
   def End(self):
     """Stop analyzing function body."""
@@ -3641,6 +3664,8 @@ def CheckForFunctionLengths(filename, clean_lines, linenum,
         else:
           function += '()'
         function_state.Begin(function)
+        if function_name != 'TEST' and function_name != 'TEST_F':
+          function_state.CheckName(error, filename, linenum)
         break
     if not body_found:
       # No body for the function (or evidence of a non-function) was found.
@@ -3649,9 +3674,11 @@ def CheckForFunctionLengths(filename, clean_lines, linenum,
   elif Match(r'^\}\s*$', line):  # function end
     function_state.Check(error, filename, linenum)
     function_state.CheckCyclomaticComplexity(error, filename, linenum)
+    function_state.CheckNestedMaxDepth(error, filename, linenum)
     function_state.End()
   elif not Match(r'^\s*$', line):
     function_state.CountCyclomaticComplexity(line)
+    function_state.CountNestedMaxDepth(line)
     function_state.Count()  # Count non-blank/non-comment lines.
 
 
