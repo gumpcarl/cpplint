@@ -10,7 +10,7 @@ required = {'pandas'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 if len(missing) != 0:
-    print("Fail to commit. Please install pandas manully and commit again.\n$ pip3 install pandas")
+    print("Fail to commit. Please install pandas manually and commit again.\n$ pip3 install pandas")
     sys.exit(1)
 
 import pandas as pd
@@ -83,8 +83,8 @@ def main():
                     update_category_count = True
                     older_category_count[new_cat] = new_category_count[new_cat]
             else:
-                new_cat_error = new_cat_error.append({"filename": new_cat.first,
-                                                      "category": new_cat.second,
+                new_cat_error = new_cat_error.append({"filename": new_cat[0],
+                                                      "category": new_cat[1],
                                                       'old_error': 0,
                                                       'new_error': new_category_count[new_cat]}, ignore_index=True)
         exit_code = new_cat_error.size

@@ -811,6 +811,8 @@ _OTHER_SYS_HEADER = 3
 _LIKELY_MY_HEADER = 4
 _POSSIBLE_MY_HEADER = 5
 _OTHER_HEADER = 6
+_ROS_HEADER = 7
+_NIO_HEADER = 8
 
 # These constants define the current inline assembly state
 _NO_ASM = 0       # Outside of inline assembly block
@@ -1098,6 +1100,8 @@ class _IncludeState(object):
       _LIKELY_MY_HEADER: 'header this file implements',
       _POSSIBLE_MY_HEADER: 'header this file may implement',
       _OTHER_HEADER: 'other header',
+      _ROS_HEADER: 'ros message header',
+      _NIO_HEADER: 'nio message header',
       }
   _SECTION_NAMES = {
       _INITIAL_SECTION: "... nothing. (This can't be an error.)",
@@ -5090,6 +5094,10 @@ def _ClassifyInclude(fileinfo, include, used_angle_brackets, include_order="defa
       return _C_SYS_HEADER
     else:
       return _OTHER_SYS_HEADER
+  elif os.path.exists(os.path.join('/opt/ros/melodic/include/', include)):
+    return _ROS_HEADER  
+  elif 'nio_msgs' in include:
+    return _NIO_HEADER
 
   # If the target file and the include we're checking share a
   # basename when we drop common extensions, and the include
